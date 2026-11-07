@@ -1,50 +1,66 @@
-# Dendry Starter Pack
+# Manhunt
 
-This is a starter pack for [Dendry](https://github.com/aucchen/dendry) games. It includes a
-basic game structure, a sample story, and a few useful extensions.
+An iOS game of real-world hide and seek, written in SwiftUI.
 
-## Getting Started
+- **Invite friends** with a link (`manhunt://join?code=ABC123`) or a 6-character code.
+- When the host starts, everyone is **randomly split into two teams**: about half become **Hunters** and the rest are **Runners**.
+- **Runners stay on foot.** If the phone's motion sensors (CoreMotion's accelerometer-based activity classifier, backed up by GPS speed) detect a vehicle, the Hunters are **pinged immediately** with the runner's location, and again every minute until the runner is back on foot.
+- **Hunters get every Runner's location every 5 minutes** and are allowed to drive.
+- **Caught = out.** Hunters tag a runner (or the runner admits it). Hunters win if every runner is caught; Runners win if time runs out.
 
-First, duplicate (fork) this repository by clicking the "Use this template" button in the top right.  
-<img width="176" alt="image" src="https://github.com/smwhr/dendry-starter-pack/assets/1090485/425a706a-ec08-49ff-a573-f6a768525ba9">  
-and choose "create a new repository".
+## Project layout
 
-If you have a working node environment, we recommand running it locally (see below). Otherwise, you can do everything in the browser.
+```
+project.yml                 XcodeGen spec (generates Manhunt.xcodeproj)
+Manhunt/
+  ManhuntApp.swift          App entry, invite-link handling, screen routing
+  Config.swift              Supabase URL + key  ← fill these in
+  Models.swift              Game / Player / Ping models
+  Services/
+    GameService.swift       Supabase auth, RPCs, realtime, runner/hunter logic
+    LocationManager.swift   Background GPS
+    MotionDetector.swift    Vehicle detection (CoreMotion + GPS speed)
+    NotificationManager.swift  Local alerts for hunters/runners
+  Views/                    Home, Lobby, Runner, Hunter, Caught, Game Over
+supabase/migrations/        Database schema, security rules and game RPCs
+```
 
-## Running on github pages
+## Setup
 
-### Activate pages
+### 1. Backend (Supabase, free tier is fine)
 
-In your forked repository, click the "Settings" button, then scroll down to the "Pages" section.  
-In the "Build and deploy" section, select the "Github Actions" option, then click "Save".  
-<img height="331" alt="image" src="https://github.com/smwhr/dendry-starter-pack/assets/1090485/322c183f-cb5d-423b-b81a-acd19fb70600">
+1. Create a project at [supabase.com](https://supabase.com).
+2. Open **SQL Editor**, paste `supabase/migrations/20261107000000_manhunt.sql` and run it
+   (or `supabase link && supabase db push` with the CLI).
+3. **Authentication → Sign In / Providers → enable "Anonymous sign-ins"** (players don't need accounts).
+4. From **Project Settings → API**, copy the project URL and the anon/publishable key into `Manhunt/Config.swift`.
 
+### 2. iOS app
 
-### Edit the story
+Requires Xcode 15+ and iOS 17+.
 
-To open the github development environment by just pressing `.` in the browser.  
-<img width="1030" alt="image" src="https://github.com/smwhr/dendry-starter-pack/assets/1090485/8d41e0cf-06f2-4ffa-a8e1-e164baa52ad6">  
+```sh
+brew install xcodegen
+xcodegen            # creates Manhunt.xcodeproj and pulls supabase-swift via SPM
+open Manhunt.xcodeproj
+```
 
-It will allow you to modify the files in the repository directly from the browser.  
-Each time you're satisfied with your changes, save (commit) them by clicking the "Commit and push" button in the source control <img height="20" alt="image" src="https://github.com/smwhr/dendry-starter-pack/assets/1090485/5bf0742a-61ad-490e-bc19-7c74a37c88a8"> menu. You'll need to add a "commit message" every time (it'll help you track your changes, but don't sweat it). 
+In Xcode, pick your team under **Signing & Capabilities**, change the bundle id if needed, and run on a real iPhone (the simulator has no motion sensors).
+When prompted, allow **Location → Always**, **Motion & Fitness**, and **Notifications**.
 
-<img width="349" alt="image" src="https://github.com/smwhr/dendry-starter-pack/assets/1090485/15d24de9-cb17-478e-a479-24564303f830">
+## How it works
 
+| Piece | Implementation |
+| --- | --- |
+| Team split | `start_game` RPC shuffles players server-side: `hunters = max(1, n/2)`, the rest are runners. |
+| Fair reveals | Runners' positions are **never** stored continuously. The runner's phone only writes a `ping` every 5 minutes (aligned to the end of the head start) or when a vehicle is detected. Row-level security stops anyone from posting pings for someone else, and stops caught runners from posting at all. |
+| Vehicle detection | `CMMotionActivityManager` reports `automotive` (classified from accelerometer data on the motion coprocessor). As a backup, 3 consecutive GPS fixes faster than 9 m/s (~32 km/h) also count. |
+| Instant hunter alerts | Each phone subscribes to Supabase Realtime for its game. A new vehicle ping triggers a time-sensitive local notification + haptic on every hunter's phone. |
+| Background | All players run continuous background location during a game, which keeps the app (and its realtime connection) alive with the phone locked. |
+| Game end | `mark_caught` ends the game when the last runner is caught; `finish_if_expired` ends it when the clock runs out. |
 
-### Publish the game
-Each time you commit, it will automatically build the game and publish it on github pages (at the url https://YOURHANDLE.github.io/YOURREPONAME).  
-If an error occurs (because you made a mistake in your code), you can see the logs in the "Actions" tab.
+## Known limitations / next steps
 
-## Running locally
-
-First of all, clone your forked repository.
-
-### Install dependencies
-Run `npm install` in the repository folder.
-
-### Build the game
-Run `npm run dendry make-html` in the repository folder.  
-This will build the game and put the result in the `out/html` folder.  
-
-
-
+- **Custom-scheme invite links** (`manhunt://…`) open the app when tapped, but some apps don't make them clickable. The share message always includes the code as a fallback. For bulletproof links, add a domain with Universal Links (Associated Domains + an `apple-app-site-association` file).
+- **Alerts rely on the app running.** If iOS kills a hunter's app, they'll miss the instant alert until they reopen it. For guaranteed delivery, add a Supabase Edge Function / database webhook on `pings` inserts that sends APNs pushes.
+- **Catching is honour-based** (tag button / "I've been caught"). A proximity check (e.g. Nearby Interaction or Bluetooth) could automate it.
