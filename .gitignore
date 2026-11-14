@@ -1,3 +1,11 @@
+# Xcode
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+DerivedData/
+build/
+.swiftpm/
+.build/
+*.ipa
+*.dSYM.zip
 .DS_Store
-node_modules
-out
